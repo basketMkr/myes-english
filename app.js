@@ -1,6 +1,6 @@
 /* MYES English — PWA personale. Dati nel dispositivo (IndexedDB), sincronizzazione facoltativa con un Gist privato. */
 'use strict';
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.1.0';
 
 /* ---------- icone ---------- */
 const I = {
@@ -30,8 +30,10 @@ const ico = (n, fill) => `<svg viewBox="0 0 24 24" fill="${fill?'currentColor':'
 
 /* ---------- utilità ---------- */
 const GRAMMAR = window.GRAMMAR || [];
-const CATS = ['Vocabolo','Phrasal verb','Idioma','Collocazione','Colloquiale','Struttura','Agg. composto','Coppia confondibile'];
-const catClass = c => 'c-' + String(c||'Vocabolo').split(/[ .]/)[0];
+const CATS = ['Parola','Phrasal verb','Espressione','Trappola'];
+const OLD_CATS = {'Vocabolo':'Parola','Agg. composto':'Parola','Idioma':'Espressione','Collocazione':'Espressione','Colloquiale':'Espressione','Struttura':'Espressione','Coppia confondibile':'Trappola'};
+const catClass = c => 'c-' + ({'Parola':'Parola','Phrasal verb':'Phrasal','Espressione':'Espressione','Trappola':'Trappola'}[c] || 'Parola');
+const NEW_PER_DAY = 10, SESSION_MAX = 30;
 const INT = [0,1,3,7,14,30,60];
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -39,19 +41,33 @@ const ymd = d => d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+
 const today = () => ymd(new Date());
 const addDays = n => { const d = new Date(); d.setDate(d.getDate()+n); return ymd(d); };
 const uid = p => p + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
-const isDue = w => !w.due || w.due <= today();
+const isNew = w => !w.due;
+const isDue = w => !!w.due && w.due <= today();
 const shuffle = a => { a = a.slice(); for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; };
 const fmtDate = d => { try{ return new Date(d+'T12:00').toLocaleDateString('it-IT',{day:'numeric',month:'long',year:'numeric'}); }catch(e){ return d; } };
 const ago = ms => { if(!ms) return 'mai'; const m = Math.round((Date.now()-ms)/60000); if(m<1) return 'adesso'; if(m<60) return m+' min fa'; const h=Math.round(m/60); if(h<24) return h+' h fa'; const g=Math.round(h/24); return g===1?'ieri':g+' giorni fa'; };
 
+/* ---------- coda del ripasso ---------- */
+function todayQueue(){
+  const words = live('words');
+  const reviews = words.filter(isDue).sort((a,b)=>a.due.localeCompare(b.due) || (a.box||0)-(b.box||0)).slice(0, SESSION_MAX);
+  const introduced = words.filter(w=>w.firstSeen===today()).length;
+  const room = Math.min(Math.max(0, NEW_PER_DAY - introduced), SESSION_MAX - reviews.length);
+  const fresh = words.filter(isNew).sort((a,b)=>(b.created||0)-(a.created||0)).slice(0, Math.max(0, room));
+  return {reviews, fresh, all:[...reviews, ...fresh]};
+}
+function gStat(id){ const g = S.gstats[id]; if(!g || !(g.r+g.w)) return null; return {...g, rate:g.w/(g.r+g.w)}; }
+function weakTopics(){ return GRAMMAR.map(t=>({t, g:gStat(t.id)})).filter(x=>x.g && x.g.w>0).sort((a,b)=>b.g.rate-a.g.rate || b.g.w-a.g.w); }
+
 /* ---------- archivio locale (IndexedDB) ---------- */
-const STORES = ['words','lessons','errors'];
+const STORES = ['words'];
+const DB_STORES = ['words','lessons','errors'];
 const Store = {
   db:null,
   open(){
     return new Promise((res,rej)=>{
       const r = indexedDB.open('myes-english', 1);
-      r.onupgradeneeded = () => { const d = r.result; STORES.forEach(s=>{ if(!d.objectStoreNames.contains(s)) d.createObjectStore(s,{keyPath:'id'}); }); if(!d.objectStoreNames.contains('meta')) d.createObjectStore('meta'); };
+      r.onupgradeneeded = () => { const d = r.result; DB_STORES.forEach(s=>{ if(!d.objectStoreNames.contains(s)) d.createObjectStore(s,{keyPath:'id'}); }); if(!d.objectStoreNames.contains('meta')) d.createObjectStore('meta'); };
       r.onsuccess = () => { this.db = r.result; res(); };
       r.onerror = () => rej(r.error);
     });
@@ -68,22 +84,34 @@ const Store = {
 
 /* ---------- stato ---------- */
 const S = {
-  data:{words:[], lessons:[], errors:[]}, stats:{reviewDays:[], updatedAt:0},
+  data:{words:[]}, stats:{reviewDays:[], updatedAt:0}, gstats:{},
   sync:{token:'', gistId:'', last:0, state:'off', msg:''}, lastBackup:0, persisted:false,
   route:'oggi', q:'', cat:'Tutte', open:null, sort:'recenti',
-  gTopic:null, reveal:{}, diaryTab:'lezioni', session:null, quiz:null, pack:null, ready:false
+  gTopic:null, reveal:{}, session:null, quiz:null, gq:null, pack:null, ready:false
 };
 const live = c => S.data[c].filter(x=>!x.deleted);
 
 async function loadAll(){
   await Store.open();
-  for(const c of STORES) S.data[c] = await Store.all(c);
+  S.data.words = await Store.all('words');
   S.stats = (await Store.getMeta('stats')) || {reviewDays:[], updatedAt:0};
+  S.gstats = (await Store.getMeta('gstats')) || {};
   S.sync = {...S.sync, ...((await Store.getMeta('sync')) || {})};
   S.lastBackup = (await Store.getMeta('lastBackup')) || 0;
-  if(!(await Store.getMeta('seeded')) && window.SEED){
-    for(const c of STORES){ const have = new Set(S.data[c].map(x=>x.id)); const add = window.SEED[c].filter(x=>!have.has(x.id)); await Store.putMany(c, add); S.data[c].push(...add); }
-    await Store.setMeta('seeded', Date.now());
+  const seedV = (await Store.getMeta('seedVersion')) || ((await Store.getMeta('seeded')) ? 1 : 0);
+  if(window.SEED && seedV < window.SEED.version){
+    const byId = new Map(S.data.words.map(w=>[w.id,w]));
+    const write = [];
+    for(const sw of window.SEED.words){
+      const cur = byId.get(sw.id);
+      if(!cur){ write.push(sw); continue; }
+      if(!cur.updatedAt && !cur.deleted){ write.push({...sw, box:cur.box||0, due:cur.due||'', star:!!cur.star, firstSeen:cur.firstSeen}); }
+    }
+    // voci modificate dall'utente con le vecchie categorie: ricolloca
+    for(const w of S.data.words){ if(OLD_CATS[w.cat] && w.updatedAt && !write.find(x=>x.id===w.id)){ write.push({...w, cat:OLD_CATS[w.cat], syn: w.syn || (w.cat==='Colloquiale'?'colloquiale':''), updatedAt:Date.now()}); } }
+    if(write.length){ await Store.putMany('words', write); const m = new Map(S.data.words.map(w=>[w.id,w])); write.forEach(w=>m.set(w.id,w)); S.data.words=[...m.values()]; }
+    await Store.setMeta('seedVersion', window.SEED.version);
+    if(!(await Store.getMeta('seeded'))) await Store.setMeta('seeded', Date.now());
   }
   S.seededAt = (await Store.getMeta('seeded')) || Date.now();
   try{ if(navigator.storage && navigator.storage.persist){ S.persisted = await navigator.storage.persisted() || await navigator.storage.persist(); } }catch(e){}
@@ -122,7 +150,9 @@ async function gh(method, path, body){
   if(!r.ok) throw new Error('GitHub ha risposto con errore '+r.status+'. Riprova più tardi.');
   return r.status===204 ? null : r.json();
 }
-function payload(){ return {app:'myes-english', v:1, savedAt:Date.now(), words:S.data.words, lessons:S.data.lessons, errors:S.data.errors, stats:S.stats}; }
+function payload(){ return {app:'myes-english', v:2, savedAt:Date.now(), words:S.data.words, stats:S.stats, gstats:S.gstats}; }
+function mergeG(a,b){ const out = {...a}; Object.entries(b||{}).forEach(([k,v])=>{ if(!out[k] || (v.t||0) > (out[k].t||0)) out[k]=v; }); return out; }
+const snapKey = () => JSON.stringify({w:S.data.words,s:S.stats,g:S.gstats});
 function mergeColl(a,b){ const m = new Map(); [...a,...b].forEach(r=>{ if(!r||!r.id) return; const o = m.get(r.id); if(!o || (r.updatedAt||0) > (o.updatedAt||0)) m.set(r.id, r); }); return [...m.values()]; }
 function mergeStats(a,b){ const days = [...new Set([...(a.reviewDays||[]), ...(b.reviewDays||[])])].sort().slice(-400); return {reviewDays:days, updatedAt:Math.max(a.updatedAt||0, b.updatedAt||0)}; }
 async function saveSync(){ const {state, msg, ...keep} = S.sync; await Store.setMeta('sync', keep); }
@@ -148,7 +178,7 @@ async function doSync(manual){
     const f = g.files && g.files[GIST_FILE];
     let remote = null;
     if(f){ const text = f.truncated ? await (await fetch(f.raw_url,{cache:'no-store'})).text() : f.content; try{ remote = JSON.parse(text); }catch(e){ remote = null; } }
-    const before = JSON.stringify({w:S.data.words,l:S.data.lessons,e:S.data.errors,s:S.stats});
+    const before = snapKey();
     if(remote && remote.app==='myes-english'){
       for(const c of STORES){
         const merged = mergeColl(S.data[c], remote[c]||[]);
@@ -158,12 +188,13 @@ async function doSync(manual){
         S.data[c] = merged;
       }
       S.stats = mergeStats(S.stats, remote.stats||{}); await Store.setMeta('stats', S.stats);
+      S.gstats = mergeG(S.gstats, remote.gstats); await Store.setMeta('gstats', S.gstats);
     }
-    const remoteSame = remote && JSON.stringify({w:remote.words,l:remote.lessons,e:remote.errors,s:remote.stats}) === JSON.stringify({w:S.data.words,l:S.data.lessons,e:S.data.errors,s:S.stats});
+    const remoteSame = remote && JSON.stringify({w:remote.words,s:remote.stats,g:remote.gstats}) === snapKey();
     if(!remoteSame) await gh('PATCH','/gists/'+S.sync.gistId,{files:{[GIST_FILE]:{content:JSON.stringify(payload())}}});
     S.sync.last = Date.now(); S.sync.state='ok'; S.sync.msg=''; await saveSync();
     if(manual) toast('Sincronizzato');
-    if(JSON.stringify({w:S.data.words,l:S.data.lessons,e:S.data.errors,s:S.stats}) !== before && !S.session && !S.quiz) render();
+    if(snapKey() !== before && !S.session && !S.quiz && !S.gq) render();
   }catch(e){
     S.sync.state='error'; S.sync.msg = e.message || 'Sincronizzazione non riuscita.';
     if(manual) toast(S.sync.msg);
@@ -198,6 +229,7 @@ async function importBackup(text){
   if(o.app!=='myes-english'){ toast('Il file non è un backup di MYES English.'); return; }
   for(const c of STORES){ const merged = mergeColl(S.data[c], o[c]||[]); await Store.putMany(c, merged); S.data[c] = merged; }
   S.stats = mergeStats(S.stats, o.stats||{}); await Store.setMeta('stats', S.stats);
+  S.gstats = mergeG(S.gstats, o.gstats); await Store.setMeta('gstats', S.gstats);
   toast('Backup importato e unito ai dati attuali'); render(); scheduleSync();
 }
 const needsBackup = () => { const covered = S.sync.token && S.sync.state!=='error' && Date.now()-(S.sync.last||0) < 14*864e5; return !covered && Date.now()-Math.max(S.lastBackup||0, S.seededAt||0) > 14*864e5; };
@@ -208,40 +240,29 @@ function parsePack(text){
   const m = t.match(/\{[\s\S]*\}/); if(m) t = m[0];
   let o; try{ o = JSON.parse(t); }catch(e){ return {error:'Il testo non è un pacchetto valido. Incolla tutto il blocco che ti ho preparato, dalla prima { all\'ultima }.'}; }
   if(o.app==='myes-english'){ return {error:'Questo è un backup completo: usa "Importa backup" nelle Impostazioni.'}; }
-  if(!o.words && !o.errors && !o.lesson) return {error:'Il pacchetto non contiene parole, errori o lezioni.'};
+  if(!Array.isArray(o.words) || !o.words.length) return {error:'Il pacchetto non contiene parole.'};
   return {pack:o};
 }
 function openPackPreview(o){
   const words = (o.words||[]).filter(w=>w && w.term && w.it);
-  const existing = new Map(live('words').map(w=>[w.term.trim().toLowerCase(), w]));
+  const existing = new Set(live('words').map(w=>w.term.trim().toLowerCase()));
   const fresh = words.filter(w=>!existing.has(String(w.term).trim().toLowerCase()));
   const dup = words.length - fresh.length;
-  const errors = (o.errors||[]).filter(e=>e && e.wrong && e.right);
-  S.pack = {o, fresh, errors};
+  S.pack = {o, fresh};
   sheet(`${sheetHead('Importa pacchetto')}
     <div class="preview">
-      ${o.lesson&&o.lesson.title?`<div><b>Lezione</b>: ${esc(o.lesson.title)} · ${esc(fmtDate(o.lesson.date||today()))}</div>`:''}
+      ${o.source?`<div><b>Fonte</b>: ${esc(o.source)}</div>`:''}
       <div><b>${fresh.length}</b> ${fresh.length===1?'parola nuova':'parole nuove'}${dup?` · ${dup} già ${dup===1?'presente (saltata)':'presenti (saltate)'}`:''}</div>
-      <div><b>${errors.length}</b> ${errors.length===1?'errore da annotare':'errori da annotare'}</div>
     </div>
-    ${fresh.length?`<div style="max-height:180px;overflow:auto;font-size:14px;display:grid;gap:4px">${fresh.map(w=>`<div><b>${esc(w.term)}</b> <span class="muted">· ${esc(w.it)}</span></div>`).join('')}</div>`:''}
-    <div class="row" style="justify-content:flex-end"><button class="btn ghost" data-act="close-sheet">Annulla</button><button class="btn primary" data-act="pack-confirm">Importa</button></div>`);
+    ${fresh.length?`<div style="max-height:220px;overflow:auto;font-size:14px;display:grid;gap:4px">${fresh.map(w=>`<div><b>${esc(w.term)}</b> <span class="muted">· ${esc(w.it)}</span></div>`).join('')}</div>`:''}
+    <div class="row" style="justify-content:flex-end"><button class="btn ghost" data-act="close-sheet">Annulla</button><button class="btn primary" data-act="pack-confirm" ${fresh.length?'':'disabled'}>Importa</button></div>`);
 }
 async function confirmPack(){
-  const {o, fresh, errors} = S.pack; const now = Date.now(); const src = (o.lesson && o.lesson.title) || o.source || '';
-  for(let i=0;i<fresh.length;i++){ const w = fresh[i]; await put('words', uid('w'), {term:String(w.term).trim(), it:String(w.it).trim(), ex:w.ex||'', cat:CATS.includes(w.cat)?w.cat:'Vocabolo', note:w.note||'', src:w.src||src, box:0, due:today(), star:false, created:now+i}); }
-  for(const e of errors){
-    const same = live('errors').find(x=>x.wrong.trim().toLowerCase()===String(e.wrong).trim().toLowerCase());
-    if(same) await put('errors', same.id, {...same, count:(same.count||1)+1, why:e.why||same.why});
-    else await put('errors', uid('e'), {wrong:e.wrong, right:e.right, why:e.why||'', count:1});
-  }
-  if(o.lesson && o.lesson.title){
-    const l = o.lesson; const same = live('lessons').find(x=>x.date===(l.date||today()) && x.title===l.title);
-    await put('lessons', same?same.id:uid('l'), {date:l.date||today(), title:l.title, topics:l.topics||'', notes:l.notes||''});
-  }
-  S.pack = null; closeSheet(); toast(`Importate ${fresh.length} parole`);
+  const {o, fresh} = S.pack; const now = Date.now(); const src = o.source || '';
+  for(let i=0;i<fresh.length;i++){ const w = fresh[i]; const cat = CATS.includes(w.cat) ? w.cat : (OLD_CATS[w.cat] || 'Parola');
+    await put('words', uid('w'), {term:String(w.term).trim(), it:String(w.it).trim(), ex:w.ex||'', cat, note:w.note||'', ipa:w.ipa||'', syn:w.syn||'', src:w.src||src, box:0, due:'', star:false, created:now+i}); }
+  S.pack = null; closeSheet(); toast(fresh.length===1?'Importata 1 parola':`Importate ${fresh.length} parole`);
 }
-
 /* ---------- voce ---------- */
 function speak(text){
   try{
@@ -253,10 +274,10 @@ function speak(text){
 const clean = t => String(t).split(/\s+\/\s+|\s+vs\s+/)[0].replace(/\(.*?\)/g,'').trim();
 
 /* ---------- navigazione ---------- */
-const ROUTES = [['oggi','Oggi','home'],['parole','Parole','words'],['ripasso','Ripasso','review'],['grammatica','Grammatica','grammar'],['diario','Diario','diary']];
+const ROUTES = [['oggi','Oggi','home'],['parole','Parole','words'],['ripasso','Ripasso','review'],['grammatica','Grammatica','grammar']];
 const ALL_ROUTES = [...ROUTES.map(r=>r[0]), 'impostazioni'];
 function navHTML(side){
-  const due = live('words').filter(isDue).length;
+  const due = todayQueue().all.length;
   const items = ROUTES.map(([k,l,i])=>`<button class="${side?'nav':''}" data-go="${k}" ${S.route===k?'aria-current="page"':''}>${ico(i)}<span>${l}</span>${k==='ripasso'&&due?`<span class="count">${due}</span>`:''}</button>`).join('');
   return side ? items + `<button class="nav" data-go="impostazioni" ${S.route==='impostazioni'?'aria-current="page"':''} style="margin-top:8px">${ico('gear')}<span>Impostazioni</span></button>` : items;
 }
@@ -271,16 +292,18 @@ function bannerHTML(){
   return '';
 }
 function vOggi(){
-  const words = live('words');
-  const due = words.filter(isDue).length, tot = words.length;
+  const words = live('words'); const q = todayQueue();
+  const tot = words.length, n = q.all.length;
   const mastered = words.filter(w=>(w.box||0)>=3).length;
   const pct = tot ? Math.round(mastered/tot*100) : 0;
   const st = streak();
-  const pool = words.slice().sort((a,b)=>a.id<b.id?-1:1);
   const seed = Number(today().split('-').join(''));
+  let pool = words.filter(w=>w.firstSeen && (w.box||0)<=1).sort((a,b)=>a.id<b.id?-1:1);
+  if(!pool.length) pool = words.filter(isNew).sort((a,b)=>(b.created||0)-(a.created||0)).slice(0,30);
+  if(!pool.length) pool = words.slice().sort((a,b)=>a.id<b.id?-1:1);
   const w = pool.length ? pool[seed % pool.length] : null;
-  const errs = live('errors').sort((a,b)=>(b.count||1)-(a.count||1)).slice(0,3);
-  const last = live('lessons').sort((a,b)=>(b.date||'').localeCompare(a.date||''))[0];
+  const weak = weakTopics()[0];
+  const untouched = GRAMMAR.find(t=>!gStat(t.id));
   const h = new Date().getHours(); const hi = h<13?'Good morning':h<18?'Good afternoon':'Good evening';
   const dt = new Date().toLocaleDateString('it-IT',{weekday:'long',day:'numeric',month:'long'});
   return `
@@ -292,39 +315,35 @@ function vOggi(){
   <section class="hero">
     <div class="card today">
       <div class="eyebrow">Ripasso di oggi</div>
-      <h2>${due ? `${due} ${due===1?'parola ti aspetta':'parole ti aspettano'}` : (tot ? 'Sei in pari' : 'Il glossario è vuoto')}</h2>
-      <p>${due ? `Circa ${Math.max(1,Math.round(Math.min(due,20)*0.3))} minuti per le prime ${Math.min(due,20)}. Quelle che sai tornano più avanti, quelle che sbagli ritornano subito.` : (tot ? 'Nessuna parola in scadenza. Puoi fare un quiz o un ripasso libero.' : 'Aggiungi le prime parole con il tasto +.')}</p>
-      <div class="row">${due?`<button class="btn" data-act="start-review">${ico('cards')} Inizia ripasso</button>`:`<button class="btn" data-act="start-quiz">${ico('quiz')} Fai un quiz</button>`}</div>
+      <h2>${n ? `${n} ${n===1?'parola':'parole'}` : (tot ? 'Sei in pari' : 'Il glossario è vuoto')}</h2>
+      <p>${n ? `${q.reviews.length} da ripassare · ${q.fresh.length} ${q.fresh.length===1?'nuova':'nuove'}. Circa ${Math.max(1,Math.round(n*0.3))} minuti.` : (tot ? 'Per oggi hai finito. Puoi fare un quiz o esercitarti sulla grammatica.' : 'Aggiungi le prime parole con il tasto +.')}</p>
+      <div class="row">${n?`<button class="btn" data-act="start-review">${ico('cards')} Inizia ripasso</button>`:`<button class="btn" data-act="start-quiz">${ico('quiz')} Fai un quiz</button>`}</div>
     </div>
     ${w ? `<div class="card wod">
       <div class="row" style="justify-content:space-between"><span class="eyebrow">Parola del giorno</span><button class="icon-btn" data-act="speak" data-t="${esc(clean(w.term))}" aria-label="Ascolta">${ico('speak')}</button></div>
       <div class="term">${esc(w.term)}</div>
+      ${w.ipa?`<div class="ipa">${esc(w.ipa)}</div>`:''}
       <div class="muted">${esc(w.it)}</div>
       ${w.ex?`<div class="ex" style="margin-top:10px">${esc(w.ex)}</div>`:''}
     </div>` : `<div class="card wod"><span class="eyebrow">Parola del giorno</span><p class="muted">Comparirà quando il glossario avrà qualche voce.</p></div>`}
   </section>
+  <section class="card" style="display:grid;gap:10px">
+    <div class="eyebrow">Grammatica da rinforzare</div>
+    ${weak ? `<h2>${esc(weak.t.title)}</h2><p class="muted" style="margin:0;font-size:15px">${weak.g.w} ${weak.g.w===1?'errore':'errori'} su ${weak.g.r+weak.g.w} esercizi. ${esc(weak.t.sub)}</p>`
+      : untouched ? `<h2>${esc(untouched.title)}</h2><p class="muted" style="margin:0;font-size:15px">Non ti sei ancora esercitato su questa scheda. ${esc(untouched.sub)}</p>`
+      : `<h2>Nessuna scheda debole</h2><p class="muted" style="margin:0;font-size:15px">Negli esercizi fatti finora non hai errori. Un giro misto tiene tutto fresco.</p>`}
+    <div class="row">${(weak||untouched)?`<button class="btn primary sm" data-act="g-start" data-id="${(weak?weak.t:untouched).id}">${ico('bolt')} Esercitati</button><button class="btn sm" data-act="topic-open" data-id="${(weak?weak.t:untouched).id}">Apri la scheda</button>`:`<button class="btn primary sm" data-act="g-start">${ico('bolt')} Giro misto</button>`}</div>
+  </section>
   <section class="grid g3 stats">
     <div class="card stat"><b>${tot}</b><span>parole nel glossario</span></div>
     <div class="card stat"><b>${pct}%</b><span>consolidate (livello 3+)</span></div>
-    <div class="card stat"><b>${live('lessons').length}</b><span>lezioni annotate</span></div>
-  </section>
-  <section class="grid g2">
-    <div class="card" style="display:grid;gap:10px;align-content:start">
-      <div class="row" style="justify-content:space-between"><h2>Errori da tenere d'occhio</h2><button class="btn ghost sm" data-go="diario" data-tab="errori">Tutti</button></div>
-      ${errs.length ? errs.map(e=>`<div style="display:grid;gap:2px"><div><span style="color:var(--bad);text-decoration:line-through">${esc(e.wrong)}</span> → <b style="color:var(--good)">${esc(e.right)}</b></div><div class="muted" style="font-size:14px">${esc(e.why||'')}</div></div>`).join('') : '<p class="muted">Nessun errore annotato.</p>'}
-    </div>
-    <div class="card" style="display:grid;gap:10px;align-content:start">
-      <div class="row" style="justify-content:space-between"><h2>Ultima lezione</h2><button class="btn ghost sm" data-go="diario" data-tab="lezioni">Diario</button></div>
-      ${last ? `<div><div class="eyebrow">${esc(fmtDate(last.date))}</div><h3 style="margin-top:4px">${esc(last.title)}</h3>${last.topics?`<p class="muted" style="margin:6px 0 0;font-size:14px">${esc(last.topics)}</p>`:''}</div>` : '<p class="muted">Nessuna lezione annotata.</p>'}
-      <div class="row"><button class="btn sm" data-act="add-lesson">${ico('plus')} Annota lezione</button><button class="btn sm" data-act="paste-pack">${ico('paste')} Importa pacchetto</button></div>
-    </div>
+    <div class="card stat"><b>${st}</b><span>giorni di fila</span></div>
   </section>`;
 }
-
 function filteredWords(){
   const q = S.q.trim().toLowerCase();
   let ws = live('words').filter(w => (S.cat==='Tutte' || (S.cat==='★ Preferite' ? w.star : w.cat===S.cat)) &&
-    (!q || [w.term,w.it,w.ex,w.note,w.src].some(x=>String(x||'').toLowerCase().includes(q))));
+    (!q || [w.term,w.it,w.ex,w.note,w.src,w.syn].some(x=>String(x||'').toLowerCase().includes(q))));
   if(S.sort==='az') ws.sort((a,b)=>a.term.localeCompare(b.term,'en',{sensitivity:'base'}));
   else if(S.sort==='deboli') ws.sort((a,b)=>(a.box||0)-(b.box||0));
   else ws.sort((a,b)=>(b.created||0)-(a.created||0));
@@ -362,9 +381,11 @@ function wordListHTML(ws){
         <div class="row" style="gap:8px">${w.star?`<span style="color:#D9A400;display:inline-flex">${ico('star',1).replace('<svg','<svg width="16" height="16"')}</span>`:''}<span class="pill ${catClass(w.cat)}">${esc(w.cat)}</span></div>
       </button>
       ${open?`<div class="item-body">
+        ${w.ipa?`<div class="ipa">${esc(w.ipa)}</div>`:''}
         ${w.ex?`<div class="ex">${esc(w.ex)}</div>`:''}
+        ${w.syn?`<div style="font-size:15px"><b>Sinonimi / registro:</b> ${esc(w.syn)}</div>`:''}
         ${w.note?`<div class="note">${esc(w.note)}</div>`:''}
-        <div class="meta"><span>Livello <span class="dots">${[1,2,3,4,5,6].map(i=>`<i class="${b>=i?'f':''}"></i>`).join('')}</span></span>${w.src?`<span>Fonte: ${esc(w.src)}</span>`:''}<span>Prossimo ripasso: ${isDue(w)?'oggi':esc(fmtDate(w.due))}</span></div>
+        <div class="meta"><span>Livello <span class="dots">${[1,2,3,4,5,6].map(i=>`<i class="${b>=i?'f':''}"></i>`).join('')}</span></span>${w.src?`<span>Fonte: ${esc(w.src)}</span>`:''}<span>${isNew(w)?'Nuova, non ancora studiata':'Prossimo ripasso: '+(isDue(w)?'oggi':esc(fmtDate(w.due)))}</span></div>
         <div class="row" style="gap:4px">
           <button class="btn sm" data-act="speak" data-t="${esc(clean(w.term))}">${ico('speak')} Ascolta</button>
           ${w.ex?`<button class="btn sm ghost" data-act="speak" data-t="${esc(w.ex)}">Esempio</button>`:''}
@@ -380,29 +401,32 @@ function wordListHTML(ws){
 function vRipasso(){
   if(S.session) return vSession();
   if(S.quiz) return vQuiz();
-  const words = live('words'); const due = words.filter(isDue).length;
-  const boxes = [0,1,2,3,4,5,6].map(b=>words.filter(w=>(w.box||0)===b).length);
-  const max = Math.max(1,...boxes);
+  if(S.gq) return vGQ();
+  const words = live('words'); const q = todayQueue();
+  const boxes = [0,1,2,3,4,5,6].map(b=>words.filter(w=>(w.box||0)===b && !isNew(w)).length);
+  const nNew = words.filter(isNew).length;
+  const max = Math.max(1, nNew, ...boxes);
+  const weak = weakTopics().slice(0,3);
   return `
   <header class="topbar"><div><div class="eyebrow">Ripasso</div><h1>Allenati</h1></div>${gearBtn()}</header>
-  <section class="grid g3">
-    <button class="card mode" data-act="start-review" ${!words.length?'disabled':''}><div class="ico">${ico('cards')}</div><h2>Flashcard</h2><p class="muted" style="margin:0">${due?`${due} in scadenza oggi. Ogni parola torna quando stai per dimenticarla.`:'Niente in scadenza: parte un ripasso libero di 10 parole.'}</p></button>
+  <section class="grid g2">
+    <button class="card mode" data-act="start-review" ${!words.length?'disabled':''}><div class="ico">${ico('cards')}</div><h2>Flashcard</h2><p class="muted" style="margin:0">${q.all.length?`Oggi: ${q.reviews.length} da ripassare e ${q.fresh.length} nuove. Ogni parola torna quando stai per dimenticarla.`:'Per oggi sei in pari: parte un ripasso libero di 10 parole già viste.'}</p></button>
+    <button class="card mode" data-act="start-reverse" ${!words.length?'disabled':''}><div class="ico">${ico('bolt')}</div><h2>Dall'italiano</h2><p class="muted" style="margin:0">La stessa coda, al contrario: vedi l'italiano e devi produrre l'inglese. È la più difficile.</p></button>
     <button class="card mode" data-act="start-quiz" ${words.length<4?'disabled':''}><div class="ico">${ico('quiz')}</div><h2>Quiz a scelta</h2><p class="muted" style="margin:0">10 domande: leggi l'italiano e scegli l'espressione inglese giusta tra quattro.</p></button>
-    <button class="card mode" data-act="start-reverse" ${!words.length?'disabled':''}><div class="ico">${ico('bolt')}</div><h2>Dall'italiano</h2><p class="muted" style="margin:0">Flashcard al contrario: vedi l'italiano e devi produrre l'inglese. È la più difficile.</p></button>
+    <button class="card mode" data-act="g-start"><div class="ico">${ico('grammar')}</div><h2>Grammatica</h2><p class="muted" style="margin:0">10 esercizi presi dalle ${GRAMMAR.length} schede, più spesso da quelle su cui sbagli. Pensi la risposta, poi ti autovaluti.</p></button>
   </section>
+  ${weak.length?`<section class="card" style="display:grid;gap:10px"><h2>Schede da rinforzare</h2>${weak.map(x=>`<div class="set-row"><div><b>${esc(x.t.title)}</b><div class="muted" style="font-size:14px">${x.g.w} errori su ${x.g.r+x.g.w}</div></div><button class="btn sm" data-act="g-start" data-id="${x.t.id}">Esercitati</button></div>`).join('')}</section>`:''}
   <section class="card" style="display:grid;gap:12px">
     <h2>A che punto sei</h2>
-    <p class="muted" style="margin:0;font-size:14px">Ogni parola sale di livello quando la sai e torna a zero quando la sbagli. Livello 1: rivista domani. Livello 6: tra due mesi.</p>
-    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:8px;align-items:end;height:140px">
-      ${boxes.map((n,i)=>`<div style="display:grid;gap:4px;height:100%;grid-template-rows:1fr auto auto"><div style="align-self:end;height:${Math.max(4,n/max*100)}%;background:${i===0?'var(--line)':i>=3?'var(--good)':'var(--accent)'};border-radius:6px 6px 2px 2px;opacity:${i===0?1:.55+i*.07}"></div><b style="text-align:center;font:600 14px var(--mono)">${n}</b><span class="muted" style="text-align:center;font-size:12px">${i===0?'Nuove':'Liv. '+i}</span></div>`).join('')}
+    <p class="muted" style="margin:0;font-size:14px">Ogni giorno entrano al massimo ${NEW_PER_DAY} parole nuove. Una parola sale di livello quando la sai e torna a zero quando la sbagli: livello 1 la rivedi domani, livello 6 tra due mesi.</p>
+    <div style="display:grid;grid-template-columns:repeat(8,1fr);gap:6px;align-items:end;height:150px">
+      ${[nNew,...boxes].map((n,i)=>`<div style="display:grid;gap:4px;height:100%;grid-template-rows:1fr auto auto"><div style="align-self:end;height:${Math.max(4,n/max*100)}%;background:${i===0?'var(--marker)':i===1?'var(--line)':i>=4?'var(--good)':'var(--accent)'};border-radius:6px 6px 2px 2px;opacity:${i<2?1:.55+i*.06}"></div><b style="text-align:center;font:600 13px var(--mono)">${n}</b><span class="muted" style="text-align:center;font-size:11px">${i===0?'Nuove':i===1?'Da rifare':'Liv. '+(i-1)}</span></div>`).join('')}
     </div>
   </section>`;
 }
 function startReview(reverse){
-  const words = live('words');
-  let q = words.filter(isDue).sort((a,b)=>(a.due||'').localeCompare(b.due||'') || (a.box||0)-(b.box||0)).slice(0,20);
-  let free = false;
-  if(!q.length){ q = shuffle(words).slice(0,10); free = true; }
+  let q = todayQueue().all; let free = false;
+  if(!q.length){ const seen = live('words').filter(w=>!isNew(w)); q = shuffle(seen.length?seen:live('words')).slice(0,10); free = true; }
   S.session = {ids:q.map(w=>w.id), i:0, flipped:false, right:0, wrong:0, again:new Set(), reverse:!!reverse, free};
   render();
 }
@@ -418,12 +442,12 @@ function vSession(){
   const w = live('words').find(x=>x.id===s.ids[s.i]);
   if(!w){ s.i++; return vSession(); }
   const front = s.reverse ? `<div class="big">${esc(w.it)}</div><div class="hint">Come si dice in inglese?</div>` : `<div class="big">${esc(w.term)}</div><div class="hint">Cosa significa? Prova a usarla in una frase.</div>`;
-  const back = s.reverse ? `<div class="big">${esc(w.term)}</div>` : `<div class="big">${esc(w.it)}</div>`;
+  const back = (s.reverse ? `<div class="big">${esc(w.term)}</div>` : `<div class="big">${esc(w.it)}</div>`) + (w.ipa?`<div class="ipa">${esc(w.ipa)}</div>`:'') + (w.syn?`<div style="font-size:14px;text-align:left"><b>Sinonimi / registro:</b> ${esc(w.syn)}</div>`:'');
   return `<div class="flash-wrap">
     <div class="row" style="justify-content:space-between"><button class="btn ghost sm" data-act="end-session">${ico('close')} Esci</button><span class="muted" style="font:600 13px var(--mono)">${s.i+1} / ${total}</span></div>
     <div class="progress"><i style="width:${s.i/total*100}%"></i></div>
     <div class="card flash" data-act="flip" role="button" tabindex="0" aria-label="Gira la carta">
-      <span class="pill ${catClass(w.cat)}">${esc(w.cat)}</span>
+      <span class="pill ${catClass(w.cat)}">${isNew(w)?'Nuova · ':''}${esc(w.cat)}</span>
       ${front}
       ${s.flipped ? `<div class="ans">${back}${w.ex?`<div class="ex" style="text-align:left">${esc(w.ex)}</div>`:''}${w.note?`<div class="note" style="text-align:left">${esc(w.note)}</div>`:''}</div>` : `<div class="hint" style="margin-top:14px">Tocca per vedere la risposta</div>`}
     </div>
@@ -437,7 +461,7 @@ function grade(ok){
     let box = w.box||0, due;
     if(ok){ box = Math.min(box+1, 6); due = addDays(INT[box]); if(!s.again.has(id)) s.right++; }
     else { box = 0; due = today(); if(!s.again.has(id)){ s.wrong++; s.again.add(id); s.ids.push(id); } }
-    const {id:_, ...rest} = w; put('words', id, {...rest, box, due});
+    const {id:_, ...rest} = w; put('words', id, {...rest, box, due, firstSeen: w.firstSeen || today()});
   }
   s.i++; s.flipped=false;
   if(s.i>=s.ids.length) markDay();
@@ -474,12 +498,57 @@ function vQuiz(){
   </div>`;
 }
 
+function startGrammar(topicId){
+  let items;
+  if(topicId){ const t = GRAMMAR.find(x=>x.id===topicId); items = t.drill.map(d=>({tid:t.id, title:t.title, q:d[0], a:d[1]})); }
+  else {
+    const all = GRAMMAR.flatMap(t=>t.drill.map(d=>({tid:t.id, title:t.title, q:d[0], a:d[1]})));
+    const weight = it => { const g = gStat(it.tid); return g ? 1 + 4*g.rate : 2; };
+    items = all.map(it=>({it, k:-Math.log(Math.random())/weight(it)})).sort((a,b)=>a.k-b.k).slice(0,10).map(x=>x.it);
+  }
+  S.session=null; S.quiz=null; S.gq = {items:shuffle(items), i:0, shown:false, right:0, wrong:0, topic:topicId||null, missed:[]};
+  if(S.route!=='ripasso') go('ripasso'); else render();
+}
+async function gradeG(ok){
+  const z = S.gq; const it = z.items[z.i];
+  const g = S.gstats[it.tid] || {r:0, w:0};
+  S.gstats = {...S.gstats, [it.tid]:{r:g.r+(ok?1:0), w:g.w+(ok?0:1), t:Date.now()}};
+  if(ok) z.right++; else { z.wrong++; z.missed.push(it); }
+  z.i++; z.shown=false;
+  if(z.i>=z.items.length) markDay();
+  render();
+  try{ await Store.setMeta('gstats', S.gstats); }catch(e){}
+  scheduleSync();
+}
+function vGQ(){
+  const z = S.gq; const total = z.items.length;
+  if(z.i>=total){
+    const tids = [...new Set(z.missed.map(m=>m.tid))];
+    return `<div class="flash-wrap"><div class="card" style="display:grid;gap:12px;padding:28px">
+      <div class="eyebrow" style="text-align:center">Esercizi completati</div><h1 style="text-align:center">${z.right} / ${total}</h1>
+      ${tids.length?`<h3>Da rivedere</h3>${tids.map(id=>{ const t=GRAMMAR.find(x=>x.id===id); return `<div class="set-row" style="flex-wrap:nowrap"><b>${esc(t.title)}</b><button class="btn sm" data-act="topic-open" data-id="${id}" style="flex:none">Apri</button></div>`; }).join('')}`:'<p class="muted" style="text-align:center">Tutto giusto. Ottimo lavoro.</p>'}
+      <div class="row" style="justify-content:center"><button class="btn primary" data-act="g-start" ${z.topic?`data-id="${z.topic}"`:''}>Ancora</button><button class="btn" data-act="g-end">Fine</button></div>
+    </div></div>`;
+  }
+  const it = z.items[z.i];
+  return `<div class="flash-wrap">
+    <div class="row" style="justify-content:space-between"><button class="btn ghost sm" data-act="g-end">${ico('close')} Esci</button><span class="muted" style="font:600 13px var(--mono)">${z.i+1} / ${total}</span></div>
+    <div class="progress"><i style="width:${z.i/total*100}%"></i></div>
+    <div class="card" style="display:grid;gap:12px;padding:24px">
+      <span class="tag" style="font:600 11px var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:.06em">${esc(it.title)}</span>
+      <div style="font:700 21px/1.35 var(--display)">${esc(it.q)}</div>
+      ${z.shown?`<div class="drill" style="border-color:var(--good)"><div class="a">${esc(it.a)}</div></div>`:`<div class="hint muted" style="font-size:14px">Pensa la risposta (o dilla ad alta voce), poi controlla.</div>`}
+    </div>
+    ${z.shown?`<div class="grade"><button class="btn no" data-act="g-grade" data-ok="0">Sbagliata</button><button class="btn yes" data-act="g-grade" data-ok="1">Giusta</button></div>`:`<button class="btn primary" data-act="g-show">Mostra soluzione</button>`}
+  </div>`;
+}
+
 function vGrammatica(){
   if(S.gTopic) return vTopic(GRAMMAR.find(t=>t.id===S.gTopic));
   return `
-  <header class="topbar"><div><div class="eyebrow">Grammatica</div><h1>Schede</h1><p class="muted" style="margin:6px 0 0">${GRAMMAR.length} argomenti del corso, con formula, trappole per chi parla italiano ed esercizi con soluzione.</p></div>${gearBtn()}</header>
+  <header class="topbar"><div><div class="eyebrow">Grammatica</div><h1>Schede</h1><p class="muted" style="margin:6px 0 0">${GRAMMAR.length} argomenti del corso e delle dispense MYES, con formula, trappole per chi parla italiano ed esercizi.</p></div>${gearBtn()}</header>
   <section class="grid g2">
-    ${GRAMMAR.map(t=>`<button class="card topic" data-act="topic" data-id="${t.id}"><span class="tag">${esc(t.tag)}</span><h3>${esc(t.title)}</h3><p>${esc(t.sub)}</p></button>`).join('')}
+    ${GRAMMAR.map(t=>{ const g=gStat(t.id); const badge = !g ? '' : g.rate>=0.34 ? '<span class="status err" style="justify-self:start"><i></i>Da rinforzare</span>' : '<span class="status ok" style="justify-self:start"><i></i>'+g.r+'/'+(g.r+g.w)+' giuste</span>'; return `<button class="card topic" data-act="topic" data-id="${t.id}"><span class="tag">${esc(t.tag)}</span><h3>${esc(t.title)}</h3><p>${esc(t.sub)}</p>${badge}</button>`; }).join('')}
   </section>`;
 }
 function tableHTML(rows){
@@ -504,35 +573,10 @@ function vTopic(t){
     <div class="trap"><b>Trappole</b>${t.traps.map(x=>`<div>${x}</div>`).join('')}</div>
     <div class="trick"><b>Trucco</b><div style="margin-top:6px">${t.trick}</div></div>
   </section>
-  <section class="card sec"><h3>Mettiti alla prova</h3>
+  <section class="card sec"><div class="set-row"><h3>Mettiti alla prova</h3><button class="btn sm primary" data-act="g-start" data-id="${t.id}">${ico('bolt')} Esercitati</button></div>
     ${t.drill.map((d,i)=>{ const k=t.id+i; const r=S.reveal[k]; return `<div class="drill"><div>${esc(d[0])}</div>${r?`<div class="a">${esc(d[1])}</div>`:`<button class="btn sm" data-act="reveal" data-k="${k}" style="justify-self:start">Mostra soluzione</button>`}</div>`;}).join('')}
   </section>
   ${nx?`<button class="card topic" data-act="topic" data-id="${nx.id}"><span class="tag">Prossima scheda</span><h3>${esc(nx.title)}</h3></button>`:''}`;
-}
-
-function vDiario(){
-  const isL = S.diaryTab==='lezioni';
-  const ls = live('lessons').sort((a,b)=>(b.date||'').localeCompare(a.date||''));
-  const es = live('errors').sort((a,b)=>(b.count||1)-(a.count||1));
-  return `
-  <header class="topbar">
-    <div><div class="eyebrow">Diario</div><h1>${isL?'Lezioni':'I miei errori'}</h1></div>
-    <button class="btn primary" data-act="${isL?'add-lesson':'add-error'}">${ico('plus')} ${isL?'Lezione':'Errore'}</button>
-  </header>
-  <div class="row" style="justify-content:space-between">
-    <div class="seg" role="group" aria-label="Sezione"><button data-tab="lezioni" aria-pressed="${isL}">Lezioni · ${ls.length}</button><button data-tab="errori" aria-pressed="${!isL}">Errori · ${es.length}</button></div>
-    ${isL?`<button class="btn sm" data-act="paste-pack">${ico('paste')} Importa pacchetto</button>`:`<span class="muted" style="font-size:14px">Ordinati per frequenza</span>`}
-  </div>
-  ${isL ? (ls.length?`<div class="list">${ls.map(l=>{ const d=new Date((l.date||today())+'T12:00'); return `<div class="lesson">
-      <div class="date"><b>${d.getDate()}</b><span>${esc(d.toLocaleDateString('it-IT',{month:'short'}))}</span></div>
-      <div style="display:grid;gap:4px"><h3>${esc(l.title)}</h3>${l.topics?`<div class="muted" style="font-size:14px">${esc(l.topics)}</div>`:''}${l.notes?`<div class="note" style="margin-top:4px;white-space:pre-wrap">${esc(l.notes)}</div>`:''}</div>
-      <div class="row acts" style="gap:0"><button class="icon-btn" data-act="edit-lesson" data-id="${l.id}" aria-label="Modifica">${ico('edit')}</button><button class="icon-btn" data-act="ask-del" data-coll="lessons" data-id="${l.id}" aria-label="Elimina">${ico('trash')}</button></div>
-    </div>`;}).join('')}</div>`:'<div class="card empty">Nessuna lezione annotata.</div>')
-  : (es.length?`<div class="list">${es.map(e=>`<div class="err">
-      <div class="row" style="justify-content:space-between;align-items:flex-start;flex-wrap:nowrap">
-        <div style="display:grid;gap:2px"><div><span class="w">${esc(e.wrong)}</span> → <span class="r">${esc(e.right)}</span></div>${e.why?`<div class="muted" style="font-size:14px">${esc(e.why)}</div>`:''}</div>
-        <div class="row" style="gap:0;flex-wrap:nowrap"><button class="btn sm ghost" data-act="again" data-id="${e.id}" title="L'ho rifatto">×${e.count||1} <span style="font-size:12px">+1</span></button><button class="icon-btn" data-act="edit-error" data-id="${e.id}" aria-label="Modifica">${ico('edit')}</button><button class="icon-btn" data-act="ask-del" data-coll="errors" data-id="${e.id}" aria-label="Elimina">${ico('trash')}</button></div>
-      </div></div>`).join('')}</div>`:'<div class="card empty">Nessun errore annotato.</div>')}`;
 }
 
 function vImpostazioni(){
@@ -562,12 +606,12 @@ function vImpostazioni(){
   </section>
   <section class="card sec">
     <h2>Backup su file</h2>
-    <p class="muted" style="margin:0;font-size:15px">Una copia di tutto (parole, livelli, lezioni, errori) in un file nella cartella Download. Importandolo, i dati vengono uniti a quelli presenti: non si perde niente. Ultimo backup: <b>${esc(ago(S.lastBackup))}</b>.</p>
+    <p class="muted" style="margin:0;font-size:15px">Una copia di tutto (parole, livelli, progressi di grammatica) in un file nella cartella Download. Importandolo, i dati vengono uniti a quelli presenti: non si perde niente. Ultimo backup: <b>${esc(ago(S.lastBackup))}</b>.</p>
     <div class="row"><button class="btn" data-act="export">${ico('down')} Esporta backup</button><button class="btn" data-act="import-file">${ico('up')} Importa backup</button></div>
   </section>
   <section class="card sec">
     <h2>Pacchetto lezione</h2>
-    <p class="muted" style="margin:0;font-size:15px">A fine sessione con Claude ricevi un blocco di testo con parole, errori e appunti: incollalo qui.</p>
+    <p class="muted" style="margin:0;font-size:15px">A fine sessione con Claude ricevi un blocco di testo con le parole nuove: incollalo qui.</p>
     <button class="btn" data-act="paste-pack" style="justify-self:start">${ico('paste')} Incolla pacchetto</button>
   </section>
   <section class="card sec">
@@ -577,7 +621,7 @@ function vImpostazioni(){
   <section class="card sec">
     <h2>Informazioni</h2>
     <div class="muted" style="font-size:14px;display:grid;gap:4px">
-      <div>Versione ${APP_VERSION} · ${live('words').length} parole · ${live('lessons').length} lezioni · ${live('errors').length} errori</div>
+      <div>Versione ${APP_VERSION} · ${live('words').length} parole · ${GRAMMAR.length} schede di grammatica</div>
       <div>Archivio ${S.persisted?'protetto: Android non lo cancella da solo':'non ancora protetto: installa l\'app sulla Home per renderlo persistente'}.</div>
       <div>Funziona offline dopo la prima apertura.</div>
     </div>
@@ -591,51 +635,34 @@ const fld = (id,label,val,type='text',ph='') => type==='textarea' ? `<div class=
 const sheetHead = t => `<div class="row" style="justify-content:space-between"><h2>${t}</h2><button class="icon-btn" data-act="close-sheet" aria-label="Chiudi">${ico('close')}</button></div>`;
 const formBtns = `<div class="row" style="justify-content:flex-end"><button type="button" class="btn ghost" data-act="close-sheet">Annulla</button><button class="btn primary" type="submit">Salva</button></div>`;
 function wordForm(w){
-  w = w || {cat:'Vocabolo', src: live('lessons').sort((a,b)=>(b.date||'').localeCompare(a.date||''))[0]?.title || ''};
+  w = w || {cat:'Parola', src:''};
   sheet(`<form id="wf" data-id="${w.id||''}" style="display:grid;gap:12px">${sheetHead(w.id?'Modifica parola':'Nuova parola')}
     ${fld('f-term','Inglese *',w.term,'text','es. follow up on')}
     ${fld('f-it','Italiano *',w.it,'text','es. dare seguito a')}
     ${fld('f-ex','Esempio d\'uso',w.ex,'text','I\'ll follow up on the quote tomorrow.')}
     <div class="field"><label for="f-cat">Categoria</label><select id="f-cat">${CATS.map(c=>`<option ${w.cat===c?'selected':''}>${c}</option>`).join('')}</select></div>
-    ${fld('f-note','Nota (pronuncia, uso, trappole)',w.note,'textarea')}
+    ${fld('f-ipa','Pronuncia (IPA)',w.ipa,'text','es. /ˈwɒndə/')}
+    ${fld('f-syn','Sinonimi / registro',w.syn,'text','es. worn out (informale), shattered (BrE)')}
+    ${fld('f-note','Nota (uso, trappole)',w.note,'textarea')}
     ${fld('f-src','Fonte',w.src,'text','Lezione, film, lavoro…')}
-    ${formBtns}</form>`);
-}
-function lessonForm(l){
-  l = l || {date: today()};
-  sheet(`<form id="lf" data-id="${l.id||''}" style="display:grid;gap:12px">${sheetHead(l.id?'Modifica lezione':'Annota lezione')}
-    ${fld('l-date','Data',l.date,'date')}
-    ${fld('l-title','Titolo *',l.title,'text','es. Lesson 10.3 · Emotions')}
-    ${fld('l-topics','Argomenti',l.topics,'text','Grammatica, lessico, conversazione')}
-    ${fld('l-notes','Appunti',l.notes,'textarea','Cosa ha detto l\'insegnante, compiti, dubbi…')}
-    ${formBtns}</form>`);
-}
-function errorForm(e){
-  e = e || {};
-  sheet(`<form id="ef" data-id="${e.id||''}" style="display:grid;gap:12px">${sheetHead(e.id?'Modifica errore':'Nuovo errore')}
-    ${fld('e-wrong','Come l\'ho detto *',e.wrong,'text','es. depend from')}
-    ${fld('e-right','Forma corretta *',e.right,'text','es. depend on')}
-    ${fld('e-why','Perché',e.why,'textarea','La regola in una riga')}
     ${formBtns}</form>`);
 }
 function packForm(){
   sheet(`<form id="pf" style="display:grid;gap:12px">${sheetHead('Importa pacchetto')}
-    <p class="muted" style="margin:0;font-size:15px">Incolla qui il blocco che ti ho preparato a fine sessione. Prima di importare vedi cosa contiene.</p>
-    <div class="field"><label for="p-text">Pacchetto</label><textarea id="p-text" style="min-height:160px;font:13px var(--mono)" placeholder='{"type":"myes-pack", …}'></textarea></div>
+    <p class="muted" style="margin:0;font-size:15px">Incolla qui il blocco di parole che ti ho preparato a fine sessione. Prima di importare vedi cosa contiene.</p>
+    <div class="field"><label for="p-text">Pacchetto</label><textarea id="p-text" style="min-height:160px;font:13px var(--mono)" placeholder='{"type":"myes-pack","words":[…]}'></textarea></div>
     <div class="row" style="justify-content:flex-end"><button type="button" class="btn ghost" data-act="close-sheet">Annulla</button><button class="btn primary" type="submit">Controlla</button></div></form>`);
 }
 function addMenu(){
   sheet(`${sheetHead('Aggiungi')}
     <div style="display:grid;gap:8px">
       <button class="opt" data-act="add-word">Una parola o espressione nel glossario</button>
-      <button class="opt" data-act="add-lesson">Gli appunti di una lezione</button>
-      <button class="opt" data-act="add-error">Un errore da non ripetere</button>
-      <button class="opt" data-act="paste-pack">Un pacchetto lezione preparato da Claude</button>
+      <button class="opt" data-act="paste-pack">Un pacchetto di parole preparato da Claude</button>
     </div>`);
 }
 function askDel(coll,id){
   const x = live(coll).find(o=>o.id===id); if(!x) return;
-  const name = x.term || x.title || x.wrong;
+  const name = x.term;
   sheet(`${sheetHead('Eliminare?')}<p style="margin:0">Stai per eliminare <b>${esc(name)}</b>. Non si può annullare.</p>
     <div class="row" style="justify-content:flex-end"><button class="btn ghost" data-act="close-sheet">Annulla</button><button class="btn danger" data-act="do-del" data-coll="${coll}" data-id="${id}">Elimina</button></div>`);
 }
@@ -647,24 +674,23 @@ function render(){
   if(!S.ready) return;
   $('#sidenav').innerHTML = navHTML(true);
   $('#tabbar').innerHTML = navHTML(false);
-  const views = {oggi:vOggi, parole:vParole, ripasso:vRipasso, grammatica:vGrammatica, diario:vDiario, impostazioni:vImpostazioni};
+  const views = {oggi:vOggi, parole:vParole, ripasso:vRipasso, grammatica:vGrammatica, impostazioni:vImpostazioni};
   const active = document.activeElement; const keepId = active && (active.id==='q' || active.id==='tok') ? active.id : null;
   const pos = keepId ? active.selectionStart : 0; const tokVal = $('#tok') ? $('#tok').value : '';
   $('#view').innerHTML = (views[S.route]||vOggi)();
   if($('#tok') && tokVal) $('#tok').value = tokVal;
   if(keepId && $('#'+keepId)){ const q=$('#'+keepId); q.focus(); try{ q.setSelectionRange(pos,pos); }catch(e){} }
-  $('#fab').style.display = (S.session||S.quiz||S.route==='impostazioni') ? 'none' : '';
+  $('#fab').style.display = (S.session||S.quiz||S.gq||S.route==='impostazioni'||S.route==='grammatica') ? 'none' : '';
   setSyncNote();
 }
 
 /* ---------- eventi ---------- */
 document.addEventListener('click', async ev=>{
   const g = ev.target.closest('[data-go]');
-  if(g){ if(g.dataset.tab) S.diaryTab = g.dataset.tab; S.session=null; S.quiz=null; go(g.dataset.go); return; }
+  if(g){ S.session=null; S.quiz=null; S.gq=null; go(g.dataset.go); return; }
   const th = ev.target.closest('[data-theme-set]');
   if(th){ const v = th.dataset.themeSet; try{ if(v==='system') localStorage.removeItem('myes-theme'); else localStorage.setItem('myes-theme', v); }catch(e){} if(v==='system') document.documentElement.removeAttribute('data-theme'); else document.documentElement.setAttribute('data-theme', v); render(); return; }
   const c = ev.target.closest('[data-cat]'); if(c){ S.cat=c.dataset.cat; S.open=null; render(); return; }
-  const tb = ev.target.closest('.seg [data-tab]'); if(tb){ S.diaryTab=tb.dataset.tab; render(); return; }
   const a = ev.target.closest('[data-act]'); if(!a) return;
   const act = a.dataset.act, id = a.dataset.id;
   if(act==='close-sheet'){ if(ev.target===a || a.tagName==='BUTTON') closeSheet(); return; }
@@ -674,18 +700,13 @@ document.addEventListener('click', async ev=>{
     case 'star': { const w=live('words').find(x=>x.id===id); const {id:_,...r}=w; put('words',id,{...r,star:!w.star}); break; }
     case 'add-word': closeSheet(); wordForm(); break;
     case 'edit-word': wordForm(live('words').find(x=>x.id===id)); break;
-    case 'add-lesson': closeSheet(); lessonForm(); break;
-    case 'edit-lesson': lessonForm(live('lessons').find(x=>x.id===id)); break;
-    case 'add-error': closeSheet(); errorForm(); break;
-    case 'edit-error': errorForm(live('errors').find(x=>x.id===id)); break;
     case 'paste-pack': closeSheet(); packForm(); break;
     case 'pack-confirm': confirmPack(); break;
     case 'ask-del': askDel(a.dataset.coll, id); break;
     case 'do-del': closeSheet(); del(a.dataset.coll, id); toast('Eliminato'); break;
-    case 'again': { const e=live('errors').find(x=>x.id===id); const {id:_,...r}=e; put('errors',id,{...r,count:(e.count||1)+1}); break; }
-    case 'start-review': S.quiz=null; startReview(false); if(S.route!=='ripasso') go('ripasso'); break;
-    case 'start-reverse': S.quiz=null; startReview(true); break;
-    case 'start-quiz': S.session=null; startQuiz(); if(S.route!=='ripasso') go('ripasso'); break;
+    case 'start-review': S.quiz=null; S.gq=null; startReview(false); if(S.route!=='ripasso') go('ripasso'); break;
+    case 'start-reverse': S.quiz=null; S.gq=null; startReview(true); break;
+    case 'start-quiz': S.session=null; S.gq=null; startQuiz(); if(S.route!=='ripasso') go('ripasso'); break;
     case 'flip': if(S.session && !S.session.flipped){ S.session.flipped=true; render(); } break;
     case 'grade': grade(a.dataset.ok==='1'); break;
     case 'end-session': S.session=null; render(); doSync(false); break;
@@ -695,6 +716,11 @@ document.addEventListener('click', async ev=>{
     case 'topic': S.gTopic=id; render(); $('main').scrollTop=0; window.scrollTo(0,0); break;
     case 'topics': S.gTopic=null; render(); break;
     case 'reveal': S.reveal[a.dataset.k]=true; render(); break;
+    case 'g-start': startGrammar(id); break;
+    case 'g-show': S.gq.shown=true; render(); break;
+    case 'g-grade': gradeG(a.dataset.ok==='1'); break;
+    case 'g-end': S.gq=null; render(); doSync(false); break;
+    case 'topic-open': S.gq=null; S.gTopic=id; go('grammatica'); setTimeout(()=>{ S.gTopic=id; render(); window.scrollTo(0,0); $('main').scrollTop=0; },0); break;
     case 'export': exportBackup(); break;
     case 'import-file': $('#file-in').click(); break;
     case 'sync-on': { const t = ($('#tok')?.value||'').trim(); if(!/^(ghp_|github_pat_)/.test(t)){ toast('Incolla il token: inizia con ghp_ oppure github_pat_'); break; } connectSync(t); break; }
@@ -708,21 +734,9 @@ document.addEventListener('submit', ev=>{
   if(f.id==='wf'){
     if(!v('f-term')||!v('f-it')){ toast('Inglese e italiano sono obbligatori'); return; }
     const old = live('words').find(x=>x.id===f.dataset.id);
-    const id = old?old.id:uid('w'); const base = old?(({id:_,...r})=>r)(old):{box:0,due:today(),created:Date.now(),star:false};
-    put('words', id, {...base, term:v('f-term'), it:v('f-it'), ex:v('f-ex'), cat:v('f-cat'), note:v('f-note'), src:v('f-src')});
+    const id = old?old.id:uid('w'); const base = old?(({id:_,...r})=>r)(old):{box:0,due:'',created:Date.now(),star:false};
+    put('words', id, {...base, term:v('f-term'), it:v('f-it'), ex:v('f-ex'), cat:v('f-cat'), ipa:v('f-ipa'), syn:v('f-syn'), note:v('f-note'), src:v('f-src')});
     closeSheet(); toast(old?'Parola aggiornata':'Parola aggiunta al glossario');
-  }
-  if(f.id==='lf'){
-    if(!v('l-title')){ toast('Il titolo è obbligatorio'); return; }
-    const old = live('lessons').find(x=>x.id===f.dataset.id); const id = old?old.id:uid('l');
-    put('lessons', id, {date:v('l-date')||today(), title:v('l-title'), topics:v('l-topics'), notes:v('l-notes')});
-    closeSheet(); toast('Lezione salvata');
-  }
-  if(f.id==='ef'){
-    if(!v('e-wrong')||!v('e-right')){ toast('Compila entrambe le forme'); return; }
-    const old = live('errors').find(x=>x.id===f.dataset.id); const id = old?old.id:uid('e');
-    put('errors', id, {wrong:v('e-wrong'), right:v('e-right'), why:v('e-why'), count:old?.count||1});
-    closeSheet(); toast('Errore annotato');
   }
   if(f.id==='pf'){
     const r = parsePack(v('p-text'));
@@ -736,6 +750,11 @@ document.addEventListener('input', ev=>{
 document.addEventListener('change', ev=>{ if(ev.target.id==='sort'){ S.sort=ev.target.value; render(); } });
 document.addEventListener('keydown', ev=>{
   if(ev.key==='Escape' && $('#layer').innerHTML){ closeSheet(); return; }
+  if(S.route==='ripasso' && S.gq && !$('#layer').innerHTML && !ev.target.matches('input,textarea,select') && S.gq.i<S.gq.items.length){
+    if(ev.key===' '||ev.key==='Enter'){ ev.preventDefault(); if(!S.gq.shown){ S.gq.shown=true; render(); } return; }
+    if(S.gq.shown && (ev.key==='1'||ev.key==='ArrowLeft')){ gradeG(false); return; }
+    if(S.gq.shown && (ev.key==='2'||ev.key==='ArrowRight')){ gradeG(true); return; }
+  }
   if(S.route!=='ripasso' || !S.session || $('#layer').innerHTML) return;
   if(ev.target.matches('input,textarea,select')) return;
   if(ev.key===' '||ev.key==='Enter'){ ev.preventDefault(); if(!S.session.flipped){ S.session.flipped=true; render(); } }

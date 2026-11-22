@@ -80,7 +80,9 @@ main{min-width:0;overflow:auto;height:100vh}
 .wod .term{font:800 26px/1.1 var(--display);margin:6px 0 2px}
 .ipa{font:400 13px var(--mono);color:var(--muted)}
 .pill{display:inline-flex;align-items:center;font-size:12px;font-weight:700;padding:2px 9px;border-radius:20px;white-space:nowrap}
-.c-Vocabolo{background:#ECEEF2;color:#4A5163}
+.c-Parola{background:#ECEEF2;color:#4A5163}
+.c-Espressione{background:#F0E6FF;color:#6B35B5}
+.c-Trappola{background:#FDE4E2;color:#B13A31}
 .c-Phrasal{background:#E3ECFF;color:#2448B8}
 .c-Idioma{background:#F0E6FF;color:#6B35B5}
 .c-Collocazione{background:#DDF4F1;color:#16756B}
@@ -190,7 +192,7 @@ main{min-width:0;overflow:auto;height:100vh}
   .side{display:none}
   main{height:100%;padding-bottom:calc(68px + env(safe-area-inset-bottom))}
   .wrap{padding:calc(18px + env(safe-area-inset-top)) 16px 110px;gap:18px}
-  .tabbar{display:grid;grid-template-columns:repeat(5,1fr);position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--line);padding:6px 4px calc(6px + env(safe-area-inset-bottom));z-index:30}
+  .tabbar{display:grid;grid-template-columns:repeat(4,1fr);position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--line);padding:6px 4px calc(6px + env(safe-area-inset-bottom));z-index:30}
   .tabbar button{border:0;background:none;display:grid;justify-items:center;gap:2px;font-size:11px;font-weight:700;color:var(--muted);padding:4px 0;position:relative}
   .tabbar svg{width:22px;height:22px}
   .tabbar button[aria-current="page"]{color:var(--accent)}
