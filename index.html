@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>MYES English</title>
+<meta name="description" content="Glossario, ripasso e grammatica per il corso di inglese MYES.">
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#F3F4F8">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0D111D">
+<meta name="robots" content="noindex">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+<script>try{var t=localStorage.getItem('myes-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app">
+  <aside class="side" aria-label="Navigazione">
+    <div class="brand"><div class="logo">EN</div><div><b>MYES English</b><small>Advanced 2 · Bologna</small></div></div>
+    <div id="sidenav"></div>
+    <div class="foot" id="syncnote"></div>
+  </aside>
+  <main><div class="wrap" id="view"></div></main>
+</div>
+<nav class="tabbar" id="tabbar" aria-label="Navigazione"></nav>
+<button class="fab" id="fab" aria-label="Aggiungi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+<div id="layer"></div>
+<input type="file" id="file-in" accept="application/json,.json" hidden>
+<script src="grammar.js"></script>
+<script src="seed.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

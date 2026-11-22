@@ -1,0 +1,23 @@
+{
+  "name": "MYES English",
+  "short_name": "MYES English",
+  "description": "Glossario, ripasso e grammatica per il corso di inglese MYES.",
+  "lang": "it",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0D111D",
+  "theme_color": "#2944E0",
+  "categories": ["education"],
+  "icons": [
+    {"src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+    {"src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+    {"src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+  ],
+  "shortcuts": [
+    {"name": "Ripasso", "url": "./#ripasso", "icons": [{"src": "icons/icon-192.png", "sizes": "192x192"}]},
+    {"name": "Le mie parole", "url": "./#parole", "icons": [{"src": "icons/icon-192.png", "sizes": "192x192"}]}
+  ]
+}
