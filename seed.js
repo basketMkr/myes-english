@@ -1,7 +1,24 @@
-/* Dati di partenza: glossario del corso MYES (sessioni con Claude + dispense), aggiornato al 22/11/2026.
+/* Dati di partenza: glossario del corso MYES (sessioni con Claude + dispense), aggiornato al 24/11/2026.
    Ogni voce ha updatedAt 0, così qualsiasi modifica fatta sul telefono o sul PC vince sempre. */
 (function(){
 const W = [
+{"id": "w105", "term": "miss vs lose", "it": "perdere (un mezzo, una scadenza) vs perdere (un oggetto, una partita)", "ex": "She missed the train. I lost my keys.", "cat": "Trappola", "note": "Falso amico: \"perdere il treno\" = miss, mai lose.", "src": "Condizionali (23/11)", "ipa": "", "syn": ""},
+{"id": "w106", "term": "miss the deadline", "it": "mancare la scadenza", "ex": "If we had missed the deadline, the client would have got angry.", "cat": "Espressione", "note": "deadline, non expiration (= scadenza di un prodotto o contratto).", "src": "Condizionali (23/11)", "ipa": "", "syn": ""},
+{"id": "w107", "term": "make a mistake", "it": "fare un errore", "ex": "She wouldn't have made the mistake.", "cat": "Espressione", "note": "make, non do. Error è più tecnico (system error).", "src": "Condizionali (23/11)", "ipa": "", "syn": ""},
+{"id": "w108", "term": "get angry", "it": "arrabbiarsi", "ex": "The client would have got angry.", "cat": "Espressione", "note": "get – got – got (US: gotten).", "src": "Condizionali (23/11)", "ipa": "", "syn": ""},
+{"id": "w109", "term": "If I were you", "it": "se fossi in te", "ex": "If I were you, I'd ask for a raise.", "cat": "Espressione", "note": "Formula per dare consigli. Were con tutte le persone, anche all'esame.", "src": "Condizionali (23/11)", "ipa": "", "syn": ""},
+{"id": "w110", "term": "go for a walk", "it": "fare una passeggiata", "ex": "If it weren't raining, we'd go for a walk.", "cat": "Espressione", "note": "Anche: go for a run, go for a drink.", "src": "Condizionali (23/11)", "ipa": "", "syn": ""},
+{"id": "w111", "term": "change jobs", "it": "cambiare lavoro", "ex": "If I were younger, I'd change jobs.", "cat": "Espressione", "note": "Plurale. Mai \"change work\".", "src": "Condizionali (23/11)", "ipa": "", "syn": ""},
+{"id": "w112", "term": "by car / drive to work", "it": "in macchina", "ex": "I'd go to work by car.", "cat": "Espressione", "note": "Mai \"with car\". Anche: by train, by bus, on foot.", "src": "Condizionali (23/11)", "ipa": "", "syn": ""},
+{"id": "w113", "term": "on time vs in time", "it": "puntuale / in tempo per", "ex": "They'd finish on time. We arrived in time for dinner.", "cat": "Trappola", "note": "On time = rispettando l'orario o la scadenza. In time = abbastanza presto per qualcosa.", "src": "Condizionali (23/11)", "ipa": "", "syn": ""},
+{"id": "w114", "term": "work at (a company)", "it": "lavorare in/presso (un'azienda)", "ex": "Where would you work if you didn't work at Linear?", "cat": "Trappola", "note": "at + azienda; in + settore o città.", "src": "Condizionali (23/11)", "ipa": "", "syn": ""},
+{"id": "w115", "term": "come to the party", "it": "venire alla festa", "ex": "If I weren't so tired, I'd come to the party.", "cat": "Espressione", "note": "Con i verbi di movimento: to. come – came – come.", "src": "Condizionali (23/11)", "ipa": "", "syn": ""},
+{"id": "w116", "term": "slip someone's mind", "it": "sfuggire di mente", "ex": "The meeting must have slipped her mind.", "cat": "Espressione", "note": "Più elegante di forget, ottimo al lavoro.", "src": "Modal perfect (22/11)", "ipa": "", "syn": ""},
+{"id": "w117", "term": "alibi", "it": "alibi", "ex": "He has an alibi: he was with me all day.", "cat": "Parola", "note": "/ˈælɪbaɪ/", "src": "Modal perfect (22/11)", "ipa": "", "syn": ""},
+{"id": "w118", "term": "take a wrong turn", "it": "sbagliare strada", "ex": "We must have taken a wrong turn.", "cat": "Espressione", "note": "Get lost = perdersi. Ma \"Get lost!\" da solo = Sparisci!", "src": "Modal perfect (22/11)", "ipa": "", "syn": ""},
+{"id": "w119", "term": "bored / boring", "it": "annoiato / noioso", "ex": "I was bored. The meeting was boring.", "cat": "Trappola", "note": "-ed = come ti senti, -ing = cosa lo provoca. \"I'm boring\" = sono noioso!", "src": "Lesson 10.3", "ipa": "", "syn": ""},
+{"id": "w120", "term": "excited / exciting", "it": "emozionato / emozionante", "ex": "He was excited. The news was exciting.", "cat": "Trappola", "note": "Regola -ed / -ing.", "src": "Lesson 10.3", "ipa": "", "syn": ""},
+{"id": "w121", "term": "annoyed / annoying", "it": "infastidito / fastidioso", "ex": "The interruptions were annoying. Everyone was annoyed.", "cat": "Trappola", "note": "Regola -ed / -ing.", "src": "Lesson 10.3", "ipa": "", "syn": ""},
 {"id": "w002", "term": "arrive at / arrive in", "it": "arrivare a / in", "ex": "When I arrived at the station, the train had left.", "cat": "Trappola", "note": "Mai \"arrive to\". At + luogo preciso, in + città/paese, arrive home senza preposizione. Colloquiale: get to.", "src": "Narrative tenses (22/11)", "ipa": "", "syn": ""},
 {"id": "w003", "term": "leave vs start", "it": "partire (mezzi) vs iniziare", "ex": "The train left at 9. The film started at 9.", "cat": "Trappola", "note": "Per treni, aerei, bus: leave (left, left). The car didn't start = non si accendeva.", "src": "Narrative tenses (22/11)", "ipa": "", "syn": ""},
 {"id": "w004", "term": "meet vs get to know vs know", "it": "conoscere (la prima volta) / conoscere meglio / conoscere (stato)", "ex": "I met her in 2015. I got to know her during the project.", "cat": "Trappola", "note": "\"Ho conosciuto Marco nel 2015\" = I met Marco, non I knew.", "src": "Narrative tenses (22/11)", "ipa": "", "syn": ""},
@@ -251,7 +268,7 @@ const W = [
 {"id": "h144", "term": "mustn't vs don't have to", "it": "è vietato vs non è necessario", "ex": "You mustn't smoke here. You don't have to come.", "cat": "Trappola", "note": "Entrambi in italiano sono «non devi».", "src": "Focus: Planning a Wedding", "ipa": "", "syn": ""}
 ];
 window.SEED = {
-  version: 2,
+  version: 3,
   words: W.map((w,i)=>({...w, box:0, due:'', star:false, created:3000-i, updatedAt:0}))
 };
 })();

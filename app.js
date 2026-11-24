@@ -1,6 +1,6 @@
 /* MYES English — PWA personale. Dati nel dispositivo (IndexedDB), sincronizzazione facoltativa con un Gist privato. */
 'use strict';
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
 
 /* ---------- icone ---------- */
 const I = {

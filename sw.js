@@ -1,5 +1,5 @@
 /* Service worker: l'app funziona offline. Cambia VERSION a ogni rilascio. */
-const VERSION = 'myes-v1.1.0';
+const VERSION = 'myes-v1.2.0';
 const CORE = ['./', 'index.html', 'styles.css', 'app.js', 'grammar.js', 'seed.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];
 const FONTS = 'myes-fonts';
 self.addEventListener('install', e => { e.waitUntil(caches.open(VERSION).then(c => c.addAll(CORE.map(u => new Request(u, {cache: 'reload'}))))); });
